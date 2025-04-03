@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HexaPaper - Text Storage Tool</title>
+    <!-- Include Tesseract.js for OCR -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
     <style>
         :root {
             --primary-color: #3498db;
@@ -103,6 +105,11 @@
             background-color: var(--secondary-color);
         }
         
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        
         .result-box {
             margin-top: 20px;
             border: 1px solid #ddd;
@@ -129,6 +136,18 @@
             border-radius: 4px;
             border: 1px solid #ddd;
             background-color: #000;
+        }
+        
+        canvas {
+            display: none;
+        }
+        
+        .captured-image {
+            width: 100%;
+            max-width: 500px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            display: none;
         }
         
         .controls {
@@ -162,6 +181,48 @@
             font-style: italic;
         }
         
+        .status {
+            margin-top: 10px;
+            font-style: italic;
+            color: #666;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--primary-color);
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .progress-container {
+            width: 100%;
+            background-color: #e0e0e0;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        
+        .progress-bar {
+            height: 10px;
+            border-radius: 4px;
+            background-color: var(--primary-color);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        
         @media print {
             .no-print {
                 display: none;
@@ -173,6 +234,11 @@
         
         .error {
             color: #e74c3c;
+            margin-top: 10px;
+        }
+        
+        .success {
+            color: #2ecc71;
             margin-top: 10px;
         }
     </style>
@@ -206,7 +272,7 @@
             
             <div id="print-section" class="print-only" style="display: none;">
                 <h3>HexaPaper Data:</h3>
-                <div id="print-hex-content"></div>
+                <div id="print-hex-content" style="font-family: monospace; font-size: 16px; letter-spacing: 2px; line-height: 2;"></div>
             </div>
         </div>
         
@@ -214,12 +280,24 @@
             <h2>Hexadecimal to Text</h2>
             <div class="camera-container">
                 <video id="camera-feed" autoplay playsinline></video>
-                <canvas id="capture-canvas" style="display: none;"></canvas>
+                <canvas id="capture-canvas"></canvas>
+                <img id="captured-image" class="captured-image" alt="Captured image">
+                
                 <div class="controls">
                     <button id="start-camera-btn">Start Camera</button>
-                    <button id="capture-btn" disabled>Capture</button>
+                    <button id="capture-btn" disabled>Capture Image</button>
+                    <button id="recognize-btn" disabled>Recognize Hex</button>
                     <button id="clear-decode-btn">Clear</button>
                 </div>
+                
+                <div id="loading" class="loading">
+                    <div class="loading-spinner"></div>
+                    <div id="status" class="status">Processing image...</div>
+                    <div class="progress-container">
+                        <div id="progress-bar" class="progress-bar"></div>
+                    </div>
+                </div>
+                
                 <p class="info-text">Alternatively, you can paste hex code manually:</p>
                 <textarea id="hex-input" placeholder="Enter hexadecimal values (spaces optional)..."></textarea>
                 <button id="decode-btn">Convert to Text</button>
@@ -229,6 +307,7 @@
             </div>
             <div id="text-output" class="result-box"></div>
             <div id="camera-error" class="error"></div>
+            <div id="ocr-result" class="success"></div>
         </div>
     </div>
 
@@ -319,18 +398,66 @@
         const clearDecodeBtn = document.getElementById('clear-decode-btn');
         const startCameraBtn = document.getElementById('start-camera-btn');
         const captureBtn = document.getElementById('capture-btn');
+        const recognizeBtn = document.getElementById('recognize-btn');
         const cameraFeed = document.getElementById('camera-feed');
         const captureCanvas = document.getElementById('capture-canvas');
+        const capturedImage = document.getElementById('captured-image');
         const cameraError = document.getElementById('camera-error');
+        const ocrResult = document.getElementById('ocr-result');
+        const loading = document.getElementById('loading');
+        const status = document.getElementById('status');
+        const progressBar = document.getElementById('progress-bar');
         
         let stream = null;
+        let worker = null;
+        
+        // Initialize Tesseract worker
+        const initializeWorker = async () => {
+            if (worker) return worker;
+            
+            worker = await Tesseract.createWorker('eng', 1, {
+                logger: message => {
+                    if (message.status === 'recognizing text') {
+                        status.textContent = `Recognizing text: ${Math.floor(message.progress * 100)}%`;
+                                                progressBar.style.width = `${Math.floor(message.progress * 100)}%`;
+                    }
+                }
+            });
+            
+            await worker.loadLanguage();
+            await worker.initialize();
+            // Configure for better recognition of hex text
+            await worker.setParameters({
+                tessedit_char_whitelist: '0123456789abcdefABCDEF ',
+            });
+            
+            return worker;
+        };
         
         startCameraBtn.addEventListener('click', async () => {
             try {
                 cameraError.textContent = '';
+                ocrResult.textContent = '';
+                
+                // Reset UI
+                capturedImage.style.display = 'none';
+                cameraFeed.style.display = 'block';
+                recognizeBtn.disabled = true;
+                
+                // Stop existing stream if any
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+                
+                // Get new stream
                 stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: 'environment' } 
+                    video: { 
+                        facingMode: 'environment',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    } 
                 });
+                
                 cameraFeed.srcObject = stream;
                 captureBtn.disabled = false;
                 startCameraBtn.textContent = 'Restart Camera';
@@ -344,22 +471,78 @@
             if (!stream) return;
             
             const context = captureCanvas.getContext('2d');
+            
+            // Set canvas size to match video dimensions
             captureCanvas.width = cameraFeed.videoWidth;
             captureCanvas.height = cameraFeed.videoHeight;
+            
+            // Draw video frame to canvas
             context.drawImage(cameraFeed, 0, 0, captureCanvas.width, captureCanvas.height);
             
-            // In a real application, here you would implement OCR to detect hexadecimal values
-            // For this demo, we'll just alert the user
-            alert('Image captured! In a real application, OCR would process this image to extract hexadecimal values. For now, please manually enter the hex code in the text area below.');
+            // Display the captured image
+            capturedImage.src = captureCanvas.toDataURL('image/png');
+            capturedImage.style.display = 'block';
+            cameraFeed.style.display = 'none';
+            
+            // Enable recognize button
+            recognizeBtn.disabled = false;
         });
         
-        decodeBtn.addEventListener('click', () => {
+        recognizeBtn.addEventListener('click', async () => {
+            try {
+                // Show loading indicator
+                loading.style.display = 'block';
+                ocrResult.textContent = '';
+                hexInput.value = '';
+                progressBar.style.width = '0%';
+                
+                // Initialize worker if needed
+                if (!worker) {
+                    status.textContent = 'Initializing OCR engine...';
+                    await initializeWorker();
+                }
+                
+                status.textContent = 'Analyzing image...';
+                
+                // Perform OCR on the captured image
+                const { data } = await worker.recognize(captureCanvas);
+                
+                // Process the recognized text to extract hex values
+                let recognizedText = data.text.trim();
+                ocrResult.textContent = `OCR Result: ${recognizedText}`;
+                
+                // Extract hex values from the OCR result
+                // This regex finds all hexadecimal sequences (with optional spaces between them)
+                const hexPattern = /[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2})*/g;
+                const matches = recognizedText.match(hexPattern);
+                
+                if (matches && matches.length > 0) {
+                    // Join all hex sequences
+                    const hexResult = matches.join(' ');
+                    hexInput.value = hexResult;
+                    
+                    // Automatically decode the result
+                    decodeHex(hexResult);
+                } else {
+                    textOutput.textContent = 'No valid hexadecimal values found in the image.';
+                }
+            } catch (err) {
+                ocrResult.textContent = '';
+                cameraError.textContent = `OCR error: ${err.message}`;
+                console.error('OCR error:', err);
+            } finally {
+                loading.style.display = 'none';
+            }
+        });
+        
+        // Function to decode hex to text
+        function decodeHex(hexString) {
             try {
                 // Remove all spaces and non-hex characters
-                let hex = hexInput.value.replace(/[^0-9A-Fa-f]/g, '');
+                let hex = hexString.replace(/[^0-9A-Fa-f]/g, '');
                 
                 if (!hex) {
-                    textOutput.textContent = 'Please enter valid hexadecimal values.';
+                    textOutput.textContent = 'No valid hexadecimal values found.';
                     return;
                 }
                 
@@ -382,11 +565,20 @@
                 textOutput.textContent = `Error decoding: ${err.message}`;
                 console.error('Decode error:', err);
             }
+        }
+        
+        decodeBtn.addEventListener('click', () => {
+            decodeHex(hexInput.value);
         });
         
         clearDecodeBtn.addEventListener('click', () => {
             hexInput.value = '';
             textOutput.textContent = '';
+            ocrResult.textContent = '';
+            cameraError.textContent = '';
+            capturedImage.style.display = 'none';
+            cameraFeed.style.display = 'block';
+            loading.style.display = 'none';
             
             // Stop camera if running
             if (stream) {
@@ -394,9 +586,22 @@
                 stream = null;
                 cameraFeed.srcObject = null;
                 captureBtn.disabled = true;
+                recognizeBtn.disabled = true;
                 startCameraBtn.textContent = 'Start Camera';
+            }
+        });
+        
+        // Clean up resources when page is unloaded
+        window.addEventListener('beforeunload', () => {
+            if (worker) {
+                worker.terminate();
+            }
+            
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
             }
         });
     </script>
 </body>
 </html>
+
