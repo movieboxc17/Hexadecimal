@@ -6,6 +6,8 @@
     <title>HexaPaper - Text Storage Tool</title>
     <!-- Include Tesseract.js for OCR -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+    <!-- Include OpenCV.js for image preprocessing -->
+    <script async src="https://docs.opencv.org/4.5.5/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
         :root {
             --primary-color: #3498db;
@@ -142,12 +144,19 @@
             display: none;
         }
         
-        .captured-image {
-            width: 100%;
-            max-width: 500px;
+        .images-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 15px;
+        }
+        
+        .image-preview {
+            width: calc(50% - 10px);
+            max-width: 250px;
             border-radius: 4px;
             border: 1px solid #ddd;
-            display: none;
         }
         
         .controls {
@@ -223,6 +232,33 @@
             transition: width 0.3s ease;
         }
         
+        .slider-container {
+            width: 100%;
+            margin: 15px 0;
+        }
+        
+        .slider-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .slider-label {
+            width: 120px;
+            font-size: 0.9rem;
+        }
+        
+        .slider {
+            flex: 1;
+        }
+        
+        .slider-value {
+            width: 40px;
+            text-align: right;
+            margin-left: 10px;
+            font-size: 0.9rem;
+        }
+        
         @media print {
             .no-print {
                 display: none;
@@ -241,9 +277,29 @@
             color: #2ecc71;
             margin-top: 10px;
         }
+        
+        .opencv-loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            z-index: 1000;
+        }
     </style>
 </head>
 <body>
+    <div id="opencv-loading" class="opencv-loading">
+        <div class="loading-spinner"></div>
+        <p>Loading OpenCV for image processing...</p>
+    </div>
+
     <div class="container">
         <header>
             <h1>HexaPaper</h1>
@@ -272,7 +328,7 @@
             
             <div id="print-section" class="print-only" style="display: none;">
                 <h3>HexaPaper Data:</h3>
-                <div id="print-hex-content" style="font-family: monospace; font-size: 16px; letter-spacing: 2px; line-height: 2;"></div>
+                <div id="print-hex-content" style="font-family: 'Courier New', monospace; font-size: 16px; letter-spacing: 3px; line-height: 2.5; font-weight: bold;"></div>
             </div>
         </div>
         
@@ -281,13 +337,38 @@
             <div class="camera-container">
                 <video id="camera-feed" autoplay playsinline></video>
                 <canvas id="capture-canvas"></canvas>
-                <img id="captured-image" class="captured-image" alt="Captured image">
+                <canvas id="processed-canvas"></canvas>
+                
+                <div class="images-container">
+                    <img id="original-image" class="image-preview" alt="Original image" style="display: none;">
+                    <img id="processed-image" class="image-preview" alt="Processed image" style="display: none;">
+                </div>
                 
                 <div class="controls">
                     <button id="start-camera-btn">Start Camera</button>
                     <button id="capture-btn" disabled>Capture Image</button>
                     <button id="recognize-btn" disabled>Recognize Hex</button>
                     <button id="clear-decode-btn">Clear</button>
+                </div>
+                
+                <div class="slider-container" style="display: none;" id="image-controls">
+                    <h3>Image Processing Controls</h3>
+                    <div class="slider-row">
+                        <span class="slider-label">Threshold:</span>
+                        <input type="range" min="0" max="255" value="128" class="slider" id="threshold-slider">
+                        <span class="slider-value" id="threshold-value">128</span>
+                    </div>
+                    <div class="slider-row">
+                        <span class="slider-label">Contrast:</span>
+                        <input type="range" min="1" max="30" value="10" class="slider" id="contrast-slider">
+                        <span class="slider-value" id="contrast-value">10</span>
+                    </div>
+                    <div class="slider-row">
+                        <span class="slider-label">Brightness:</span>
+                        <input type="range" min="-100" max="100" value="0" class="slider" id="brightness-slider">
+                        <span class="slider-value" id="brightness-value">0</span>
+                    </div>
+                    <button id="apply-filters-btn">Apply Filters</button>
                 </div>
                 
                 <div id="loading" class="loading">
@@ -312,6 +393,14 @@
     </div>
 
     <script>
+        let openCvReady = false;
+        
+        function onOpenCvReady() {
+            openCvReady = true;
+            document.getElementById('opencv-loading').style.display = 'none';
+            console.log("OpenCV.js is ready");
+        }
+        
         // Tab switching functionality
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => {
@@ -325,7 +414,7 @@
             });
         });
         
-        // Encode functionality
+                // Encode functionality
         const textInput = document.getElementById('text-input');
         const hexOutput = document.getElementById('hex-output');
         const hexGrid = document.getElementById('hex-grid');
@@ -399,17 +488,43 @@
         const startCameraBtn = document.getElementById('start-camera-btn');
         const captureBtn = document.getElementById('capture-btn');
         const recognizeBtn = document.getElementById('recognize-btn');
+        const applyFiltersBtn = document.getElementById('apply-filters-btn');
         const cameraFeed = document.getElementById('camera-feed');
         const captureCanvas = document.getElementById('capture-canvas');
-        const capturedImage = document.getElementById('captured-image');
+        const processedCanvas = document.getElementById('processed-canvas');
+        const originalImage = document.getElementById('original-image');
+        const processedImage = document.getElementById('processed-image');
         const cameraError = document.getElementById('camera-error');
         const ocrResult = document.getElementById('ocr-result');
         const loading = document.getElementById('loading');
         const status = document.getElementById('status');
         const progressBar = document.getElementById('progress-bar');
+        const imageControls = document.getElementById('image-controls');
+        
+        // Sliders for image processing
+        const thresholdSlider = document.getElementById('threshold-slider');
+        const thresholdValue = document.getElementById('threshold-value');
+        const contrastSlider = document.getElementById('contrast-slider');
+        const contrastValue = document.getElementById('contrast-value');
+        const brightnessSlider = document.getElementById('brightness-slider');
+        const brightnessValue = document.getElementById('brightness-value');
+        
+        // Update slider value displays
+        thresholdSlider.oninput = function() {
+            thresholdValue.textContent = this.value;
+        };
+        
+        contrastSlider.oninput = function() {
+            contrastValue.textContent = this.value;
+        };
+        
+        brightnessSlider.oninput = function() {
+            brightnessValue.textContent = this.value;
+        };
         
         let stream = null;
         let worker = null;
+        let capturedImageData = null;
         
         // Initialize Tesseract worker
         const initializeWorker = async () => {
@@ -419,16 +534,23 @@
                 logger: message => {
                     if (message.status === 'recognizing text') {
                         status.textContent = `Recognizing text: ${Math.floor(message.progress * 100)}%`;
-                                                progressBar.style.width = `${Math.floor(message.progress * 100)}%`;
+                        progressBar.style.width = `${Math.floor(message.progress * 100)}%`;
                     }
                 }
             });
             
             await worker.loadLanguage();
             await worker.initialize();
+            
             // Configure for better recognition of hex text
             await worker.setParameters({
                 tessedit_char_whitelist: '0123456789abcdefABCDEF ',
+                tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
+                tessjs_create_hocr: '0',
+                tessjs_create_tsv: '0',
+                tessjs_create_box: '0',
+                tessjs_create_unlv: '0',
+                tessjs_create_osd: '0'
             });
             
             return worker;
@@ -440,21 +562,23 @@
                 ocrResult.textContent = '';
                 
                 // Reset UI
-                capturedImage.style.display = 'none';
+                originalImage.style.display = 'none';
+                processedImage.style.display = 'none';
                 cameraFeed.style.display = 'block';
                 recognizeBtn.disabled = true;
+                imageControls.style.display = 'none';
                 
                 // Stop existing stream if any
                 if (stream) {
                     stream.getTracks().forEach(track => track.stop());
                 }
                 
-                // Get new stream
+                // Get new stream with higher resolution if possible
                 stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { 
                         facingMode: 'environment',
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
                     } 
                 });
                 
@@ -479,13 +603,77 @@
             // Draw video frame to canvas
             context.drawImage(cameraFeed, 0, 0, captureCanvas.width, captureCanvas.height);
             
+            // Store captured image data for processing
+            capturedImageData = context.getImageData(0, 0, captureCanvas.width, captureCanvas.height);
+            
             // Display the captured image
-            capturedImage.src = captureCanvas.toDataURL('image/png');
-            capturedImage.style.display = 'block';
+            originalImage.src = captureCanvas.toDataURL('image/png');
+            originalImage.style.display = 'block';
             cameraFeed.style.display = 'none';
             
-            // Enable recognize button
+            // Enable recognize button and show image controls
             recognizeBtn.disabled = false;
+            imageControls.style.display = 'block';
+            
+            // Process the image with default settings and show preview
+            processImage();
+        });
+        
+        // Process image with OpenCV
+        function processImage() {
+            if (!openCvReady || !capturedImageData) {
+                alert('OpenCV is not ready or no image captured');
+                return;
+            }
+            
+            try {
+                const threshold = parseInt(thresholdSlider.value);
+                const contrast = parseFloat(contrastSlider.value) / 10;
+                const brightness = parseInt(brightnessSlider.value);
+                
+                // Use OpenCV for image processing
+                let src = cv.imread(captureCanvas);
+                let dst = new cv.Mat();
+                
+                // Convert to grayscale
+                cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
+                
+                // Apply adaptive threshold for better text extraction
+                let processed = new cv.Mat();
+                cv.adaptiveThreshold(dst, processed, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+                
+                // Apply brightness and contrast adjustments
+                processed.convertTo(processed, -1, contrast, brightness);
+                
+                // Apply binary threshold
+                cv.threshold(processed, processed, threshold, 255, cv.THRESH_BINARY);
+                
+                // Morph operations to clean image
+                let kernel = cv.Mat.ones(3, 3, cv.CV_8U);
+                let morphed = new cv.Mat();
+                cv.morphologyEx(processed, morphed, cv.MORPH_OPEN, kernel);
+                cv.morphologyEx(morphed, morphed, cv.MORPH_CLOSE, kernel);
+                
+                // Display processed image
+                cv.imshow(processedCanvas, morphed);
+                processedImage.src = processedCanvas.toDataURL('image/png');
+                processedImage.style.display = 'block';
+                
+                // Clean up
+                src.delete();
+                dst.delete();
+                processed.delete();
+                kernel.delete();
+                morphed.delete();
+            } catch (err) {
+                console.error('Error processing image:', err);
+                cameraError.textContent = `Image processing error: ${err.message}`;
+            }
+        }
+        
+        // Apply custom filters to image
+        applyFiltersBtn.addEventListener('click', () => {
+            processImage();
         });
         
         recognizeBtn.addEventListener('click', async () => {
@@ -504,17 +692,32 @@
                 
                 status.textContent = 'Analyzing image...';
                 
-                // Perform OCR on the captured image
-                const { data } = await worker.recognize(captureCanvas);
+                // Perform OCR on the processed image
+                const { data } = await worker.recognize(processedCanvas);
                 
                 // Process the recognized text to extract hex values
                 let recognizedText = data.text.trim();
+                
+                // Clean up the OCR result
+                // Replace common OCR mistakes
+                recognizedText = recognizedText
+                    .replace(/o|O/g, '0')  // Replace o/O with 0
+                    .replace(/l|I/g, '1')  // Replace l/I with 1
+                    .replace(/B/g, '8')    // Replace B with 8
+                    .replace(/S/g, '5')    // Replace S with 5
+                    .replace(/Z/g, '2')    // Replace Z with 2
+                    .replace(/[^0-9a-fA-F\s]/g, ''); // Remove non-hex characters
+                
                 ocrResult.textContent = `OCR Result: ${recognizedText}`;
                 
-                // Extract hex values from the OCR result
-                // This regex finds all hexadecimal sequences (with optional spaces between them)
-                const hexPattern = /[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2})*/g;
-                const matches = recognizedText.match(hexPattern);
+                // Extract hex values - look for patterns of pairs with optional spaces
+                const hexPattern = /([0-9a-fA-F]{2})(?:\s+)?/g;
+                const matches = [];
+                let match;
+                
+                while ((match = hexPattern.exec(recognizedText)) !== null) {
+                    matches.push(match[1]);
+                }
                 
                 if (matches && matches.length > 0) {
                     // Join all hex sequences
@@ -576,9 +779,11 @@
             textOutput.textContent = '';
             ocrResult.textContent = '';
             cameraError.textContent = '';
-            capturedImage.style.display = 'none';
+            originalImage.style.display = 'none';
+            processedImage.style.display = 'none';
             cameraFeed.style.display = 'block';
             loading.style.display = 'none';
+            imageControls.style.display = 'none';
             
             // Stop camera if running
             if (stream) {
