@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HexaPaper - Text Storage Tool</title>
+    <style>
+        :root {
+            --primary-color: #3498db;
+            --secondary-color: #2980b9;
+            --background-color: #f5f7fa;
+            --card-color: #ffffff;
+            --text-color: #333333;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--background-color);
+            color: var(--text-color);
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        h1 {
+            color: var(--primary-color);
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #777;
+            font-size: 1.1rem;
+        }
+        
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 15px;
+            background-color: #e0e0e0;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .tab.active {
+            background-color: var(--primary-color);
+            color: white;
+            font-weight: bold;
+        }
+        
+        .tab-content {
+            display: none;
+            background-color: var(--card-color);
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        textarea {
+            width: 100%;
+            height: 150px;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            margin-bottom: 15px;
+            resize: vertical;
+        }
+        
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.3s ease;
+        }
+        
+        button:hover {
+            background-color: var(--secondary-color);
+        }
+        
+        .result-box {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            font-family: monospace;
+            overflow-wrap: break-word;
+            min-height: 100px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .camera-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        video, canvas {
+            width: 100%;
+            max-width: 500px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            background-color: #000;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 10px;
+        }
+        
+        .hex-display {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+            gap: 5px;
+            margin-top: 15px;
+            font-family: monospace;
+            font-size: 16px;
+        }
+        
+        .hex-char {
+            background-color: #f0f0f0;
+            padding: 8px;
+            text-align: center;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        
+        .info-text {
+            margin: 15px 0;
+            color: #666;
+            font-style: italic;
+        }
+        
+        @media print {
+            .no-print {
+                display: none;
+            }
+            .print-only {
+                display: block;
+            }
+        }
+        
+        .error {
+            color: #e74c3c;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>HexaPaper</h1>
+            <p class="subtitle">Store and retrieve text data on paper using hexadecimal encoding</p>
+        </header>
+        
+        <div class="tabs no-print">
+            <div class="tab active" data-tab="encode">Encode</div>
+            <div class="tab" data-tab="decode">Decode</div>
+        </div>
+        
+        <div id="encode-content" class="tab-content active">
+            <h2>Text to Hexadecimal</h2>
+            <textarea id="text-input" placeholder="Enter your text here to convert to hexadecimal..."></textarea>
+            <div class="controls">
+                <button id="encode-btn">Convert to Hex</button>
+                <button id="print-btn">Print Hex Code</button>
+                <button id="copy-btn">Copy Hex Code</button>
+                <button id="clear-encode-btn">Clear</button>
+            </div>
+            <div class="info-text">
+                The hexadecimal representation will appear below. You can print it for paper storage.
+            </div>
+            <div id="hex-output" class="result-box"></div>
+            <div id="hex-grid" class="hex-display"></div>
+            
+            <div id="print-section" class="print-only" style="display: none;">
+                <h3>HexaPaper Data:</h3>
+                <div id="print-hex-content"></div>
+            </div>
+        </div>
+        
+        <div id="decode-content" class="tab-content">
+            <h2>Hexadecimal to Text</h2>
+            <div class="camera-container">
+                <video id="camera-feed" autoplay playsinline></video>
+                <canvas id="capture-canvas" style="display: none;"></canvas>
+                <div class="controls">
+                    <button id="start-camera-btn">Start Camera</button>
+                    <button id="capture-btn" disabled>Capture</button>
+                    <button id="clear-decode-btn">Clear</button>
+                </div>
+                <p class="info-text">Alternatively, you can paste hex code manually:</p>
+                <textarea id="hex-input" placeholder="Enter hexadecimal values (spaces optional)..."></textarea>
+                <button id="decode-btn">Convert to Text</button>
+            </div>
+            <div class="info-text">
+                The decoded text will appear below.
+            </div>
+            <div id="text-output" class="result-box"></div>
+            <div id="camera-error" class="error"></div>
+        </div>
+    </div>
+
+    <script>
+        // Tab switching functionality
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                // Remove active class from all tabs and content
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                
+                // Add active class to clicked tab and corresponding content
+                tab.classList.add('active');
+                document.getElementById(`${tab.dataset.tab}-content`).classList.add('active');
+            });
+        });
+        
+        // Encode functionality
+        const textInput = document.getElementById('text-input');
+        const hexOutput = document.getElementById('hex-output');
+        const hexGrid = document.getElementById('hex-grid');
+        const encodeBtn = document.getElementById('encode-btn');
+        const printBtn = document.getElementById('print-btn');
+        const copyBtn = document.getElementById('copy-btn');
+        const clearEncodeBtn = document.getElementById('clear-encode-btn');
+        const printHexContent = document.getElementById('print-hex-content');
+        
+        encodeBtn.addEventListener('click', () => {
+            const text = textInput.value;
+            if (!text) {
+                hexOutput.textContent = 'Please enter some text to encode.';
+                hexGrid.innerHTML = '';
+                return;
+            }
+            
+            // Convert text to hex
+            const hex = Array.from(text)
+                .map(char => char.charCodeAt(0).toString(16).padStart(2, '0'))
+                .join(' ');
+            
+            hexOutput.textContent = hex;
+            
+            // Create grid display
+            hexGrid.innerHTML = '';
+            hex.split(' ').forEach(hexChar => {
+                const charDiv = document.createElement('div');
+                charDiv.className = 'hex-char';
+                charDiv.textContent = hexChar;
+                hexGrid.appendChild(charDiv);
+            });
+            
+            // Update print section
+            printHexContent.textContent = hex;
+        });
+        
+        printBtn.addEventListener('click', () => {
+            if (!hexOutput.textContent || hexOutput.textContent === 'Please enter some text to encode.') {
+                alert('Please encode some text first.');
+                return;
+            }
+            
+            document.getElementById('print-section').style.display = 'block';
+            window.print();
+            document.getElementById('print-section').style.display = 'none';
+        });
+        
+        copyBtn.addEventListener('click', () => {
+            if (!hexOutput.textContent || hexOutput.textContent === 'Please enter some text to encode.') {
+                alert('Please encode some text first.');
+                return;
+            }
+            
+            navigator.clipboard.writeText(hexOutput.textContent)
+                .then(() => alert('Hexadecimal code copied to clipboard!'))
+                .catch(err => alert('Failed to copy: ' + err));
+        });
+        
+        clearEncodeBtn.addEventListener('click', () => {
+            textInput.value = '';
+            hexOutput.textContent = '';
+            hexGrid.innerHTML = '';
+        });
+        
+        // Decode functionality
+        const hexInput = document.getElementById('hex-input');
+        const textOutput = document.getElementById('text-output');
+        const decodeBtn = document.getElementById('decode-btn');
+        const clearDecodeBtn = document.getElementById('clear-decode-btn');
+        const startCameraBtn = document.getElementById('start-camera-btn');
+        const captureBtn = document.getElementById('capture-btn');
+        const cameraFeed = document.getElementById('camera-feed');
+        const captureCanvas = document.getElementById('capture-canvas');
+        const cameraError = document.getElementById('camera-error');
+        
+        let stream = null;
+        
+        startCameraBtn.addEventListener('click', async () => {
+            try {
+                cameraError.textContent = '';
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' } 
+                });
+                cameraFeed.srcObject = stream;
+                captureBtn.disabled = false;
+                startCameraBtn.textContent = 'Restart Camera';
+            } catch (err) {
+                cameraError.textContent = `Camera error: ${err.message}`;
+                console.error('Camera error:', err);
+            }
+        });
+        
+        captureBtn.addEventListener('click', () => {
+            if (!stream) return;
+            
+            const context = captureCanvas.getContext('2d');
+            captureCanvas.width = cameraFeed.videoWidth;
+            captureCanvas.height = cameraFeed.videoHeight;
+            context.drawImage(cameraFeed, 0, 0, captureCanvas.width, captureCanvas.height);
+            
+            // In a real application, here you would implement OCR to detect hexadecimal values
+            // For this demo, we'll just alert the user
+            alert('Image captured! In a real application, OCR would process this image to extract hexadecimal values. For now, please manually enter the hex code in the text area below.');
+        });
+        
+        decodeBtn.addEventListener('click', () => {
+            try {
+                // Remove all spaces and non-hex characters
+                let hex = hexInput.value.replace(/[^0-9A-Fa-f]/g, '');
+                
+                if (!hex) {
+                    textOutput.textContent = 'Please enter valid hexadecimal values.';
+                    return;
+                }
+                
+                // Check if we have complete pairs of hex characters
+                if (hex.length % 2 !== 0) {
+                    textOutput.textContent = 'Incomplete hexadecimal sequence. Each byte should be two characters.';
+                    return;
+                }
+                
+                // Convert hex to text
+                let text = '';
+                for (let i = 0; i < hex.length; i += 2) {
+                    const hexPair = hex.substr(i, 2);
+                    const charCode = parseInt(hexPair, 16);
+                    text += String.fromCharCode(charCode);
+                }
+                
+                textOutput.textContent = text;
+            } catch (err) {
+                textOutput.textContent = `Error decoding: ${err.message}`;
+                console.error('Decode error:', err);
+            }
+        });
+        
+        clearDecodeBtn.addEventListener('click', () => {
+            hexInput.value = '';
+            textOutput.textContent = '';
+            
+            // Stop camera if running
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+                cameraFeed.srcObject = null;
+                captureBtn.disabled = true;
+                startCameraBtn.textContent = 'Start Camera';
+            }
+        });
+    </script>
+</body>
+</html>
